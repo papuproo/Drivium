@@ -1,0 +1,314 @@
+// AutoMarket — Esquema de base de datos (PostgreSQL + Prisma)
+// Fase 0. Refleja el ERD acordado: usuarios, vehículos, imágenes,
+// documentos, favoritos, conversaciones/mensajes, reseñas, vistas y órdenes.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ----------------------------- Enums -----------------------------
+
+enum UserRole {
+  BUYER
+  SELLER
+  BOTH
+  ADMIN
+}
+
+enum VerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum VehicleCondition {
+  NEW
+  USED
+  CERTIFIED_PRE_OWNED
+}
+
+enum BodyType {
+  SEDAN
+  SUV
+  TRUCK
+  COUPE
+  HATCHBACK
+  VAN
+  CONVERTIBLE
+  WAGON
+}
+
+enum FuelType {
+  GASOLINE
+  DIESEL
+  ELECTRIC
+  HYBRID
+  PLUGIN_HYBRID
+}
+
+enum Transmission {
+  AUTOMATIC
+  MANUAL
+  CVT
+}
+
+enum ListingStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  SOLD
+  EXPIRED
+}
+
+enum DocumentType {
+  TITLE
+  INSURANCE
+  INSPECTION_REPORT
+  REGISTRATION
+}
+
+enum OrderStatus {
+  PENDING
+  PAID
+  CANCELLED
+  COMPLETED
+  REFUNDED
+}
+
+// ----------------------------- Modelos -----------------------------
+
+model User {
+  id           String @id @default(uuid())
+  email        String @unique
+  passwordHash String // SIEMPRE hasheada (bcrypt/argon2), nunca texto plano
+
+  firstName String
+  lastName  String
+  phone     String?
+  avatarUrl String?
+  bio       String?
+
+  role               UserRole           @default(BOTH)
+  // Identidad: guardamos solo el ESTADO de verificación, no el documento.
+  // El archivo (si existe) va cifrado en storage restringido o vía un KYC externo.
+  verificationStatus VerificationStatus @default(UNVERIFIED)
+
+  city    String?
+  state   String?
+  country String? @default("US")
+
+  ratingAvg   Float @default(0)
+  ratingCount Int   @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  vehicles            Vehicle[]
+  favorites           Favorite[]
+  sentMessages        Message[]      @relation("MessageSender")
+  buyerConversations  Conversation[] @relation("ConversationBuyer")
+  sellerConversations Conversation[] @relation("ConversationSeller")
+  reviewsWritten      Review[]       @relation("ReviewAuthor")
+  reviewsReceived     Review[]       @relation("ReviewSubject")
+  orders              Order[]        @relation("OrderBuyer")
+  listingViews        ListingView[]
+
+  @@index([email])
+}
+
+model Vehicle {
+  id       String @id @default(uuid())
+  sellerId String
+  seller   User   @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  // Identificación
+  make  String
+  model String
+  year  Int
+  trim  String?
+  vin   String? @unique
+
+  // Clasificación
+  bodyType     BodyType
+  condition    VehicleCondition
+  fuelType     FuelType
+  transmission Transmission
+
+  // Características
+  mileage       Int
+  doors         Int?
+  exteriorColor String?
+  interiorColor String?
+  horsepower    Int?
+  rangeMiles    Int? // relevante para eléctricos/híbridos
+
+  // Precio
+  price         Decimal  @db.Decimal(12, 2)
+  originalPrice Decimal? @db.Decimal(12, 2)
+  currency      String   @default("USD")
+
+  // Publicación
+  description String?
+  status     ListingStatus @default(DRAFT)
+  featured   Boolean       @default(false) // para el carrusel del Home
+
+  // Ubicación
+  city      String
+  state     String
+  zip       String?
+  country   String  @default("US")
+  latitude  Float?
+  longitude Float?
+
+  // Métricas / ciclo de vida
+  viewsCount  Int       @default(0)
+  publishedAt DateTime?
+  soldAt      DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  images        VehicleImage[]
+  documents     VehicleDocument[]
+  favorites     Favorite[]
+  conversations Conversation[]
+  listingViews  ListingView[]
+  orders        Order[]
+
+  @@index([sellerId])
+  @@index([status])
+  @@index([make, model])
+  @@index([bodyType, fuelType])
+  @@index([price])
+  @@index([year])
+}
+
+model VehicleImage {
+  id        String  @id @default(uuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  url       String // solo la URL; el archivo vive en storage (Cloudinary/S3/UploadThing)
+  altText   String?
+  isPrimary Boolean @default(false)
+  position  Int     @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([vehicleId])
+}
+
+model VehicleDocument {
+  id        String  @id @default(uuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  type     DocumentType
+  url      String // acceso restringido; documentos sensibles no son públicos
+  verified Boolean      @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([vehicleId])
+}
+
+model Favorite {
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@id([userId, vehicleId])
+  @@index([vehicleId])
+}
+
+model Conversation {
+  id        String  @id @default(uuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  buyerId  String
+  buyer    User   @relation("ConversationBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+  sellerId String
+  seller   User   @relation("ConversationSeller", fields: [sellerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages Message[]
+
+  @@unique([vehicleId, buyerId]) // una conversación por (vehículo, comprador)
+  @@index([buyerId])
+  @@index([sellerId])
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  senderId String
+  sender   User   @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  body   String
+  readAt DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId])
+}
+
+model Review {
+  id        String @id @default(uuid())
+  authorId  String
+  author    User   @relation("ReviewAuthor", fields: [authorId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   User   @relation("ReviewSubject", fields: [subjectId], references: [id], onDelete: Cascade)
+
+  rating  Int // 1..5, validar en la capa de aplicación
+  comment String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([authorId, subjectId]) // una reseña por par autor→sujeto
+  @@index([subjectId])
+}
+
+model ListingView {
+  id        String  @id @default(uuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  viewerId String? // null si es visitante anónimo
+  viewer   User?   @relation(fields: [viewerId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([vehicleId])
+  @@index([createdAt]) // para agregaciones por día en el Dashboard
+}
+
+model Order {
+  id        String  @id @default(uuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  buyerId   String
+  buyer     User    @relation("OrderBuyer", fields: [buyerId], references: [id], onDelete: Cascade)
+
+  amount   Decimal     @db.Decimal(12, 2)
+  currency String      @default("USD")
+  status   OrderStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([buyerId])
+  @@index([vehicleId])
+}
