@@ -7,7 +7,7 @@ export default async function PruebaPage() {
             <div className="grid grid-cols-1 gap-6 md:grid-cols-[18rem_1fr]">
                 <aside className="md:sticky md:top-24 md:self-start">
                     <div className="rounded-lg border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-                        <VehicleFilters />
+
                     </div>
                 </aside>
             </div>
